@@ -1,6 +1,6 @@
 # cc_manage
 
-`ccm` 是一个交互式全屏 TUI，用来管理多套 Claude 服务商 / 模型 / Key 配置，并在激活配置时同步到 Claude 的设置文件。
+`ccm` 是一个交互式全屏 TUI，用来管理多套 Claude 服务商/模型/Key 配置，并在激活配置时同步到 Claude 的设置文件。
 `ccm` is an interactive full-screen TUI for managing multiple Claude provider/model/key profiles and syncing the active one to Claude settings.
 
 ## 中文说明
@@ -8,7 +8,7 @@
 ### 项目目标
 
 - 用单一命令 `ccm` 进行多套 Claude 配置的新增、编辑、删除与切换
-- 激活配置时，自动写入 `~/.claude/settings.json` 的 `env` 字段
+- 激活配置时，自动写入 `~/.claude/settings.json` 中的 `env` 字段
 
 ### 功能
 
