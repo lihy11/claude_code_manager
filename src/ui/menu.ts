@@ -57,6 +57,7 @@ class CcmInteractiveApp {
       smartCSR: true,
       fullUnicode: true,
       dockBorders: false,
+      terminal: "xterm",
       title: "CCM Interactive Manager",
       autoPadding: false,
       warnings: false,
@@ -1068,10 +1069,9 @@ class CcmInteractiveApp {
       right: 2,
       height: 3,
       border: "line",
-      inputOnFocus: true,
-      keys: true,
+      inputOnFocus: false,
+      keys: false,
       mouse: true,
-      censor: options.maskInput ?? false,
       style: {
         bg: UI.bg,
         fg: UI.text,
@@ -1081,7 +1081,47 @@ class CcmInteractiveApp {
         },
       },
     });
-    input.setValue(options.defaultValue ?? "");
+    let rawChars = Array.from(options.defaultValue ?? "");
+    let cursorPos = rawChars.length;
+    let viewportStart = 0;
+    let viewportTextLength = 0;
+    let cursorVisible = true;
+    const resolveViewportWidth = () => {
+      const inputWidth = typeof input.width === "number" ? input.width : modalWidth - 4;
+      return Math.max(1, inputWidth - 3);
+    };
+    const renderInputValue = (showCursor = cursorVisible) => {
+      cursorPos = clamp(cursorPos, 0, rawChars.length);
+      const displayChars = options.maskInput ? rawChars.map(() => "*") : [...rawChars];
+      const viewportWidth = resolveViewportWidth();
+
+      if (cursorPos < viewportStart) {
+        viewportStart = cursorPos;
+      } else if (cursorPos > viewportStart + viewportWidth) {
+        viewportStart = cursorPos - viewportWidth;
+      }
+      const maxViewportStart = Math.max(0, displayChars.length - viewportWidth);
+      viewportStart = clamp(viewportStart, 0, maxViewportStart);
+
+      const visibleChars = displayChars.slice(viewportStart, viewportStart + viewportWidth);
+      viewportTextLength = visibleChars.length;
+      const cursorInView = clamp(cursorPos - viewportStart, 0, Math.max(0, viewportWidth - 1));
+      const outputChars = [...visibleChars];
+      while (outputChars.length < viewportWidth) {
+        outputChars.push(" ");
+      }
+      if (showCursor) {
+        outputChars[cursorInView] = "▌";
+      }
+
+      input.setValue(outputChars.join(""));
+      this.screen.render();
+    };
+    const showCursorNow = () => {
+      cursorVisible = true;
+      renderInputValue(true);
+    };
+    showCursorNow();
 
     blessed.box({
       parent: modal,
@@ -1095,27 +1135,219 @@ class CcmInteractiveApp {
     });
 
     this.screen.render();
-    input.focus();
 
     return new Promise<PromptResult<string>>((resolve) => {
+      let settled = false;
+      let cursorBlinkTimer: NodeJS.Timeout | undefined;
+
+      const stopCursorBlink = () => {
+        if (!cursorBlinkTimer) {
+          return;
+        }
+        clearInterval(cursorBlinkTimer);
+        cursorBlinkTimer = undefined;
+      };
+
+      const startCursorBlink = () => {
+        stopCursorBlink();
+        cursorBlinkTimer = setInterval(() => {
+          if (settled) {
+            return;
+          }
+          if (this.screen.focused !== input) {
+            if (cursorVisible) {
+              cursorVisible = false;
+              renderInputValue(false);
+            }
+            return;
+          }
+          cursorVisible = !cursorVisible;
+          renderInputValue();
+        }, 520);
+      };
+
       const cleanup = () => {
-        input.removeAllListeners("submit");
-        input.unkey("escape", onBack);
+        stopCursorBlink();
+        input.off("keypress", onInputKeypress);
+        input.off("blur", onBlur);
+        input.off("click", onClick);
+        this.screen.off("keypress", onScreenKeypress);
         modal.destroy();
       };
 
-      const onBack = () => {
+      const finalize = (result: PromptResult<string>) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
         cleanup();
         this.screen.render();
-        resolve({ kind: "back" });
+        resolve(result);
       };
-      input.key("escape", onBack);
 
-      input.readInput((_err, value) => {
-        cleanup();
-        this.screen.render();
-        resolve({ kind: "ok", value: String(value ?? "").replace(/\n/g, "") });
-      });
+      const ensureFocus = () => {
+        if (settled) {
+          return;
+        }
+        if (this.screen.focused !== input) {
+          input.focus();
+          showCursorNow();
+        }
+      };
+
+      const onBack = () => {
+        finalize({ kind: "back" });
+      };
+
+      const onSubmit = () => {
+        finalize({ kind: "ok", value: rawChars.join("").replace(/[\r\n]/g, "") });
+      };
+
+      const onBlur = () => {
+        if (settled) {
+          return;
+        }
+        setImmediate(ensureFocus);
+      };
+
+      const onClick = (data: blessed.Widgets.Events.IMouseEventArg) => {
+        ensureFocus();
+        if (!data || typeof data.x !== "number") {
+          return;
+        }
+        const inputMeta = input as unknown as { lpos?: { xi: number }; ileft?: number };
+        if (!inputMeta.lpos) {
+          return;
+        }
+        const innerLeft = inputMeta.lpos.xi + (inputMeta.ileft ?? 0);
+        const relativeX = clamp(data.x - innerLeft, 0, viewportTextLength);
+        cursorPos = clamp(viewportStart + relativeX, 0, rawChars.length);
+        showCursorNow();
+      };
+
+      const onInputKeypress = (ch: string, key: blessed.Widgets.Events.IKeyEventArg) => {
+        if (settled) {
+          return;
+        }
+
+        const name = key?.name;
+        if (name === "escape") {
+          onBack();
+          return;
+        }
+        const isEnter =
+          name === "enter" ||
+          key?.full === "C-m" ||
+          key?.sequence === "\r" ||
+          key?.sequence === "\n" ||
+          ch === "\r" ||
+          ch === "\n";
+        if (isEnter) {
+          onSubmit();
+          return;
+        }
+        if (name === "left") {
+          if (cursorPos > 0) {
+            cursorPos -= 1;
+            showCursorNow();
+          }
+          return;
+        }
+        if (name === "right") {
+          if (cursorPos < rawChars.length) {
+            cursorPos += 1;
+            showCursorNow();
+          }
+          return;
+        }
+        if (name === "home" || (key?.ctrl && name === "a")) {
+          cursorPos = 0;
+          showCursorNow();
+          return;
+        }
+        if (name === "end" || (key?.ctrl && name === "e")) {
+          cursorPos = rawChars.length;
+          showCursorNow();
+          return;
+        }
+        if (name === "backspace") {
+          if (cursorPos <= 0) {
+            return;
+          }
+          rawChars.splice(cursorPos - 1, 1);
+          cursorPos -= 1;
+          showCursorNow();
+          return;
+        }
+        if (name === "delete") {
+          if (cursorPos >= rawChars.length) {
+            return;
+          }
+          rawChars.splice(cursorPos, 1);
+          showCursorNow();
+          return;
+        }
+        if (key?.ctrl && name === "u") {
+          rawChars = [];
+          cursorPos = 0;
+          showCursorNow();
+          return;
+        }
+
+        if (
+          name === "up" ||
+          name === "down" ||
+          name === "pageup" ||
+          name === "pagedown" ||
+          name === "tab" ||
+          name === "insert"
+        ) {
+          return;
+        }
+
+        if (key?.ctrl || key?.meta) {
+          return;
+        }
+
+        const source = typeof ch === "string" ? ch : "";
+        const appended = source
+          .replace(/[\r\n]/g, "")
+          .replace(/[\x00-\x1f\x7f]/g, "");
+        if (!appended) {
+          return;
+        }
+        const appendChars = Array.from(appended);
+        rawChars.splice(cursorPos, 0, ...appendChars);
+        cursorPos += appendChars.length;
+        showCursorNow();
+      };
+
+      const onScreenKeypress = (_ch: string, key: blessed.Widgets.Events.IKeyEventArg) => {
+        if (settled) {
+          return;
+        }
+        const isEnter =
+          key?.name === "enter" || key?.full === "C-m" || key?.sequence === "\r" || key?.sequence === "\n";
+        if (isEnter) {
+          onSubmit();
+          return;
+        }
+        if (key?.name === "escape") {
+          onBack();
+          return;
+        }
+        if (this.screen.focused !== input) {
+          setImmediate(ensureFocus);
+        }
+      };
+
+      input.on("keypress", onInputKeypress);
+      input.on("blur", onBlur);
+      input.on("click", onClick);
+      this.screen.on("keypress", onScreenKeypress);
+
+      ensureFocus();
+      startCursorBlink();
     });
   }
 
