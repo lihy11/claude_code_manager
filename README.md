@@ -1,10 +1,29 @@
 # cc_manage
 
-`ccm` is an interactive full-screen TUI for managing multiple Claude provider/model/key profiles.
-It includes a dashboard-style header, boxed pages, highlighted cursor selection, and centered input modals.
-At each menu level, press `Esc` or `←` to return to the previous menu.
+[中文文档](README.zh-CN.md)
 
-## Quick start
+`ccm` is an interactive full-screen TUI for managing multiple Claude provider/model/key profiles and syncing the active one to Claude settings.
+
+### Goals
+
+- Provide a single-command (`ccm`) workflow to create, edit, delete, and switch Claude profiles
+- Rewrite `env` in `~/.claude/settings.json` whenever a profile is activated
+
+### Features
+
+- Full-screen TUI with modal prompts and quick back navigation (`Esc` / `←`)
+- Profile list and active profile detail views
+- Create, edit, delete, activate profiles, and resync settings.json
+- One-time import from existing `~/.claude/settings.json`
+
+### Capabilities
+
+- Custom provider name, base URL, and API key
+- Model modes: `none` / `sonnet_only` / `all_same` / `split_three`
+- Extra environment variables via `extraEnv`
+- Atomic writes to profile storage and settings.json
+
+### Usage
 
 ```bash
 npm install
@@ -12,14 +31,21 @@ npm run build
 node dist/cli.js
 ```
 
-Optional: install globally in this repo for direct `ccm` command:
+Optional: link locally for the `ccm` command:
 
 ```bash
 npm link
 ccm
 ```
 
-## Data files
+Common menu actions:
 
-- Profiles store: `~/.claude/cc-profiles.json`
-- Claude settings synced target: `~/.claude/settings.json`
+- View profile list (active badge)
+- Add / edit / delete profiles
+- Activate a profile
+- View active profile details / resync settings.json
+
+### Data files
+
+- Profile store: `~/.claude/cc-profiles.json`
+- Claude settings sync target: `~/.claude/settings.json`
